@@ -1,0 +1,277 @@
+---
+title: "Untitled"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Section 1: Business Objective & Data Structure
+
+__Business Objective__
+
+Investment strategies for investing in start-up companies are widely based on intuition or past experience. As a result, investors rely primarily on the need being addressed, background of the founders, size of the market being addressed and the ability of the company to scale after tasting early success. The question we pose here is, “can we perform some rigorous analysis that can be used to identify relevant factors and score prospective start- ups based on their potential to be successful”. This model/ analysis will then allow investors to make more informed decisions and rely less on their intuitions. 
+
+```{r Load Libraries, message=FALSE, warning=FALSE, include=FALSE}
+library(dplyr)
+library(tidyverse)
+library(Amelia)
+library(ggplot2)
+library(scales) 
+library(RColorBrewer) 
+library(corrplot) 
+library(ggthemes) 
+library(viridis) 
+library(glue)
+library(gridExtra)
+library(caTools)
+library(devtools)
+library(woe)
+library(ResourceSelection)
+library (ROCR)
+library(reshape)
+library(SDMTools)
+
+```
+
+__Data Structure__
+
+The data has already been split into train, 'CAX_Startup_Train', and test data, 'CAX_Startup_Test'. Data dictionary was also provided that describes all the 51 variables included. The Target variable is a binary class with 234 known observations in the train set and 80 observations to be scored. I combined the data set to wholisticall verify the quality and pre-process all the independent variables for modeling and scoring. I ran a missing values check to and found out there were 80 observations that contains missing values. 
+
+
+
+```{r quality check, echo=FALSE, fig.height=4, fig.width=8, message=FALSE, warning=FALSE}
+train<- read.csv(file="data/CAX_Startup_Train.csv", header=TRUE,as.is=T)
+test<- read.csv(file="data/CAX_Startup_Test.csv", header=TRUE,as.is=T)
+train$Category<-c("Train")
+test$Category<-c("Test")
+
+
+df<-rbind(train,test)
+missing<-nrow(df[!complete.cases(df),])
+missmap(df,col = c('yellow','black'))
+```
+_Fig 1 Missing Values_
+
+The plot of the missing values showed that they only occurred within the target variable 'Dependent' representing the observations to be predicted. The remainder of the data has no missing value. A glimpse of the data frame showed that numeric and character data types. I converted some of the all of the character data type to categorical data and some coded as integer to categorical data.
+
+```{r character conversion to ategorical data and encoding, message=FALSE, warning=FALSE, include=FALSE}
+# selected all variables with 'No' values for conversion and encoding
+df2 <-df%>%select_if(~any(.=="No"))
+yes.no<-names(df2)
+for(i in yes.no)
+{
+  df[,i]<- factor(df[,i],
+                 levels = c("No","Yes"))
+}
+
+df$employee.count <- factor(df$Founders_previous_company_employee_count,
+                           levels = c("Small","Medium","Large"))
+
+# 
+# 
+df$Founders_previous_company_employee_count <- NULL
+#d$Dependent<-factor(d$Dependent)
+
+df<-df%>%mutate_if(is.character,factor)
+glimpse(df)
+
+
+# Categorical Variable data encoding
+df$Company_Location<- factor(df$Company_Location,
+                            levels = c("USA","Europe","Other"))                            
+
+df$Company_business_model<- factor(df$Company_business_model,
+                                  levels = c("B2B","B2C","Both"))
+
+df$Founder_education <- factor(df$Founder_education,
+                              levels = c("Bachelors","Masters","PhD"))
+
+df$Founder_highest_degree_type<- factor(df$Founder_highest_degree_type,
+                                       levels = c("Management","Science","Technology","Other"))
+
+df$Company_Product_or_service <- factor(df$Company_Product_or_service,
+                                       levels = c("Product","Service","Both"))
+
+df$Company_difficulty_obtaining_workforce<- factor(df$Company_difficulty_obtaining_workforce,
+                                                  levels = c("Low","Medium","High"))
+
+df$Founders_Industry_exposure<- factor(df$Founders_Industry_exposure,
+                                      levels = c("Low","Medium","High"))
+
+df$Founders_experience <- factor(df$Founders_experience,
+                                levels = c("Low","Medium","High"))
+
+df$Company_Industry_count <-factor(df$Company_Industry_count,
+                                  levels = c("single","Few","Many"))
+
+df$Founders_publications <- factor(df$Founders_publications,
+                                  levels = c("Few","Many","None"))
+
+df$Founders_profile_similarity <- factor(df$Founders_profile_similarity,
+                                        levels = c("None","Low","Medium","High"))
+df$Dependent <-factor(df$Dependent)
+
+df$Founder_university_quality <-factor(df$Founder_university_quality)
+
+df$Founders_Popularity <- factor(df$Founders_Popularity)
+```
+
+##  Section 2: Exploratory Data Analysis
+
+To effectively explore the data and get insights from the visualizations, I split the data back to train and test and then split the traininto two sub-data frames, continuous and categorical data frames. 
+```{r message=FALSE, warning=FALSE, include=FALSE}
+train <- df%>%filter(Category=='Train')%>%select(-Category)
+test <- df%>%filter(Category=='Test')%>%select(-Category)
+
+# partitioning of test and train set for evaluation of models
+# separating out 0 and 1 level
+train_0 <- train[train$Dependent==0,]
+train_1 <- train[train$Dependent==1,]
+
+
+cnt_train <- train%>%select_if(is.numeric)
+cnt_train$Dependent<-train$Dependent
+
+```
+
+I started by plotting the distribution of the continuous variables before moving on the the categorical variables. I grouped some of the plots for comparison and the first set of plots were to understand the distribution of investors to the startups.
+
+```{r Plot Investment Distributions, echo=FALSE, fig.height=10, fig.width=10, message=FALSE, warning=FALSE}
+# Plot Investment Distributions
+inv.plt.1 <-cnt_train%>%
+  ggplot(aes(Company_investor_count_seed, fill=Dependent)) +
+  geom_histogram(bins = 15,alpha=0.5)+
+  scale_x_continuous(breaks = seq(0,17,1)) +
+  theme_fivethirtyeight()+
+  scale_fill_manual(values = c("#999999", "#7a2477")) + 
+  labs(title = 'Investor Distributions', subtitle = 'Seed Investors') 
+
+inv.plt.2 <-cnt_train%>%
+  ggplot(aes(Company_investor_count_Angel_VC, fill=Dependent)) +
+  geom_histogram(bins=15,alpha=0.5)+
+  scale_x_continuous(breaks = seq(0,15,1)) +
+  theme_fivethirtyeight()+
+  scale_fill_manual(values = c("#999999", "#7a2477")) +
+  labs(subtitle = 'Angel/VC Investors')
+
+inv.plt.3 <-cnt_train%>%
+  ggplot(aes(Company_repeat_investors_count, fill=Dependent)) +
+  geom_histogram(bins= 15,alpha=0.5)+
+  scale_x_continuous(breaks = seq(0,15,1)) +
+  theme_fivethirtyeight()+
+  scale_fill_manual(values = c("#999999", "#7a2477")) +
+  labs(subtitle = 'Repeat Investors')
+
+inv.dist.plts<- grid.arrange(inv.plt.1,inv.plt.2,inv.plt.3)
+ggsave('figs/inv.dist.plts.png')
+```
+_Fig. 2.1 Investor Distributions_
+
+We find that all distributions are right skewed with evidence of outliers. In addition, over 75% of the startups had no investors in seed or as Angel/VC. To follow up on this I then check to see how these variables are correlated with each other.
+
+
+
+
+
+
+
+```{r echo=FALSE, fig.height=7, fig.width=10, message=FALSE, warning=FALSE}
+# Skills distribution
+
+skill.score.plt1 <-cnt_train%>%
+  ggplot(aes(Founders_skills_score, fill=Dependent)) +
+  geom_density(alpha=0.5)+
+  theme_fivethirtyeight()+
+  scale_fill_manual(values = c("#999999", "#d84242")) +
+  labs(title= 'Skills Distribution',subtitle = 'Skills Score')
+
+skill.score.plt2 <-cnt_train%>%
+  ggplot(aes(Founders_Entrepreneurship_skills_score, fill=Dependent)) +
+  geom_histogram(alpha=0.5)+
+  theme_fivethirtyeight()+
+  scale_fill_manual(values = c("#999999", "#7a2477")) +
+  labs(subtitle = 'Entrepenurship Skills of Founders')
+
+skill.score.plt3 <-cnt_train%>%
+  ggplot(aes(Founders_Operations_skills_score, fill=Dependent)) +
+  geom_histogram(alpha=0.5)+
+  theme_fivethirtyeight()+
+  scale_fill_manual(values = c("#999999", "#7a2477")) +
+  labs(subtitle = 'Operations Skills of Founders')
+
+skill.score.plt4 <- cnt_train%>%
+  ggplot(aes(Founders_Engineering_skills_score, fill=Dependent)) +
+  geom_histogram(alpha=0.5)+
+  theme_fivethirtyeight()+
+  scale_fill_manual(values = c("#999999", "#7a2477")) +
+  labs(subtitle = 'Engineering skills of Founders')
+
+skill.score.plt5 <-cnt_train%>%
+  ggplot(aes(Founders_Marketing_skills_score, fill=Dependent)) +
+  geom_histogram(alpha=0.5)+
+  theme_fivethirtyeight()+
+  scale_fill_manual(values = c("#999999", "#7a2477")) +
+  labs(subtitle = 'Marketing skills of Founders')
+
+skill.score.plt6 <-cnt_train%>%
+  ggplot(aes(Founders_Leadership_skills_score, fill=Dependent)) +
+  geom_histogram(alpha=0.5)+
+  theme_fivethirtyeight()+
+  scale_fill_manual(values = c("#999999", "#7a2477")) +
+  labs(subtitle = 'Leadership Skill of Founders')
+
+skill.score.plt7 <- cnt_train%>%
+  ggplot(aes(Founders_Data_Science_skills_score, fill=Dependent)) +
+  geom_histogram(alpha=0.5)+
+  theme_fivethirtyeight()+
+  scale_fill_manual(values = c("#999999", "#7a2477")) +
+  labs(subtitle = 'Data Science skill of Founders')
+
+skill.score.plt8 <-cnt_train%>%
+  ggplot(aes(Founders_Business_Strategy_skills_score, fill=Dependent)) +
+  geom_histogram(alpha=0.5)+
+  theme_fivethirtyeight()+
+  scale_fill_manual(values = c("#999999", "#7a2477")) +
+  labs(subtitle = 'Business Strategy skill of Founders')
+
+skill.score.plt9 <- cnt_train%>%
+  ggplot(aes(Founders_Product_Management_skills_score, fill=Dependent)) +
+  geom_histogram(alpha=0.5)+
+  theme_fivethirtyeight()+
+  scale_fill_manual(values = c("#999999", "#7a2477")) +
+  labs(subtitle = 'Product Management Skill of Founders')
+
+skill.score.plt10 <- cnt_train%>%
+  ggplot(aes(Founders_Sales_skills_score, fill=Dependent)) +
+  geom_histogram(alpha=0.5)+
+  theme_fivethirtyeight()+
+  scale_fill_manual(values = c("#999999", "#7a2477")) +
+  labs(subtitle = 'Sales skill of founders')
+
+skill.score.plt11 <- cnt_train%>%
+  ggplot(aes(Founders_Domain_skills_score, fill=Dependent)) +
+  geom_histogram(alpha=0.5)+
+  theme_fivethirtyeight()+
+  scale_fill_manual(values = c("#999999", "#7a2477")) +
+  labs(subtitle = 'Domain skill of founders')
+
+
+grid.arrange(skill.score.plt1,skill.score.plt2,skill.score.plt3,skill.score.plt4,skill.score.plt5)
+
+grid.arrange(skill.score.plt1,skill.score.plt6,skill.score.plt7,skill.score.plt8,skill.score.plt9,skill.score.plt10, skill.score.plt11)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
